@@ -35,7 +35,7 @@
 #define GPS_RAW_INT_HPP
 
 #include <uORB/topics/sensor_gps.h>
-
+#include <uORB/topics/a02.h>
 using namespace time_literals;
 
 class MavlinkStreamGPSRawInt : public MavlinkStream
@@ -58,6 +58,7 @@ private:
 	explicit MavlinkStreamGPSRawInt(Mavlink *mavlink) : MavlinkStream(mavlink) {}
 
 	uORB::Subscription _sensor_gps_sub{ORB_ID(sensor_gps), 0};
+	uORB::Subscription _a02_sub{ORB_ID(a02)};
 	hrt_abstime _last_send_ts {};
 	static constexpr hrt_abstime kNoGpsSendInterval {1_s};
 
@@ -68,6 +69,24 @@ private:
 		hrt_abstime now{};
 
 		if (_sensor_gps_sub.update(&gps)) {
+			a02_s _a02{};
+			_a02_sub.copy(&_a02);
+			if(_a02.start_swarm)
+			{
+			msg.hdg_acc=55;
+			}
+			else
+			{
+			msg.hdg_acc=1;
+			}
+		        if(_a02.stop_swarm)
+			{
+			msg.yaw=88;
+			}
+			else
+			{
+			msg.yaw=1;
+			}
 			msg.time_usec = gps.timestamp;
 			msg.fix_type = gps.fix_type;
 			msg.lat = gps.lat;

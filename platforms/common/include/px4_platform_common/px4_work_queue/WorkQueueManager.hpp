@@ -94,7 +94,7 @@ static constexpr wq_config_t lp_default{"wq:lp_default", 1920, -50};
 static constexpr wq_config_t test1{"wq:test1", 2000, 0};
 static constexpr wq_config_t test2{"wq:test2", 2000, 0};
 static constexpr wq_config_t control_node{"wq:control_node", 2000, -51};
-
+static constexpr wq_config_t swarm_node{"wq:swarm_node", 2000, -52};
 } // namespace wq_configurations
 
 /**

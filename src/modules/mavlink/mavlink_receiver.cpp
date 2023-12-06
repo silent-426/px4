@@ -126,6 +126,9 @@ void
 MavlinkReceiver::handle_message(mavlink_message_t *msg)
 {
 	switch (msg->msgid) {
+	case MAVLINK_MSG_ID_GPS_RAW_INT:
+                handle_message_gps_raw_int(msg);
+                break;
 	case MAVLINK_MSG_ID_COMMAND_LONG:
 		handle_message_command_long(msg);
 		break;
@@ -3489,4 +3492,49 @@ void MavlinkReceiver::stop()
 {
 	_should_exit.store(true);
 	pthread_join(_thread, nullptr);
+}
+
+
+
+void
+MavlinkReceiver::handle_message_gps_raw_int(mavlink_message_t *msg)
+{
+	vehicle_status_s _vehicle_status{};
+	_vehicle_status_sub.copy(&_vehicle_status);
+	PX4_INFO("_vehicle_status.system_id=%d",_vehicle_status.system_id);
+	PX4_INFO("msg->sysid=%d",msg->sysid);
+	PX4_INFO("msg->compid=%d",msg->compid);
+	if((_vehicle_status.system_id==1)&&(msg->sysid==55)&&(msg->compid==55))
+	{
+		PX4_INFO("dsada");
+ 	a02_s _a02{};
+ 	_a02.timestamp=hrt_absolute_time();
+	_a02.start_swarm=true;
+	_a02_pub.publish(_a02);
+	}
+	if((_vehicle_status.system_id!=1)&&(msg->sysid==1))
+	{
+ a01_s _a01{};
+ mavlink_gps_raw_int_t _gps_raw = {};
+ mavlink_msg_gps_raw_int_decode(msg,&_gps_raw);
+ _a01.timestamp=hrt_absolute_time();
+	_a01.lat=_gps_raw.lat* 1e-7;
+	_a01.lon=_gps_raw.lon* 1e-7;
+	_a01_pub.publish(_a01);
+if(_gps_raw.hdg_acc==55)
+{
+ a02_s _a02{};
+ _a02.timestamp=hrt_absolute_time();
+_a02.start_swarm=true;
+	_a02_pub.publish(_a02);
+}
+if(_gps_raw.yaw==88)
+{
+ a02_s _a02{};
+ _a02.timestamp=hrt_absolute_time();
+_a02.stop_swarm=true;
+	_a02_pub.publish(_a02);
+}
+	}
+
 }

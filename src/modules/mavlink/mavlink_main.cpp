@@ -1693,6 +1693,14 @@ Mavlink::configure_streams_to_default(const char *configure_single_stream)
 
 	/* fallthrough */
 	case MAVLINK_MODE_CUSTOM:
+	vehicle_status_s vehicle_status;
+	if (_vehicle_status_sub.copy(&vehicle_status))
+	{
+		if(vehicle_status.system_id==1)
+		{
+		configure_stream_local("GPS_RAW_INT", unlimited_rate);
+		}
+	}
 		//stream nothing
 		break;
 

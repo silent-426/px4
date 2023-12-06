@@ -117,7 +117,8 @@
 # include <uORB/topics/debug_value.h>
 # include <uORB/topics/debug_vect.h>
 #endif // !CONSTRAINED_FLASH
-
+#include <uORB/topics/a01.h>
+#include <uORB/topics/a02.h>
 using namespace time_literals;
 
 class Mavlink;
@@ -154,7 +155,7 @@ private:
 					       float param4 = 0.0f, float param5 = 0.0f, float param6 = 0.0f, float param7 = 0.0f);
 
 	void handle_message(mavlink_message_t *msg);
-
+	void handle_message_gps_raw_int(mavlink_message_t *msg);
 	void handle_message_adsb_vehicle(mavlink_message_t *msg);
 	void handle_message_att_pos_mocap(mavlink_message_t *msg);
 	void handle_message_battery_status(mavlink_message_t *msg);
@@ -287,6 +288,8 @@ private:
 	uint16_t _mavlink_status_last_packet_rx_drop_count{0};
 
 	// ORB publications
+	uORB::Publication<a01_s>				_a01_pub{ORB_ID(a01)};
+	uORB::Publication<a02_s>				_a02_pub{ORB_ID(a02)};
 	uORB::Publication<airspeed_s>				_airspeed_pub{ORB_ID(airspeed)};
 	uORB::Publication<battery_status_s>			_battery_pub{ORB_ID(battery_status)};
 	uORB::Publication<camera_status_s>			_camera_status_pub{ORB_ID(camera_status)};

@@ -1,0 +1,5 @@
+menuconfig MODULES_SWARM_NODE
+	bool "swarm_node"
+	default n
+	---help---
+		Enable support for swarm_node
