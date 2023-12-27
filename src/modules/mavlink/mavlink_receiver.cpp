@@ -129,6 +129,9 @@ MavlinkReceiver::handle_message(mavlink_message_t *msg)
 	case MAVLINK_MSG_ID_GPS_RAW_INT:
                 handle_message_gps_raw_int(msg);
                 break;
+	case MAVLINK_MSG_ID_GLOBAL_POSITION_INT:
+                handle_message_global_position_int(msg);
+                break;
 	case MAVLINK_MSG_ID_COMMAND_LONG:
 		handle_message_command_long(msg);
 		break;
@@ -3501,9 +3504,9 @@ MavlinkReceiver::handle_message_gps_raw_int(mavlink_message_t *msg)
 {
 	vehicle_status_s _vehicle_status{};
 	_vehicle_status_sub.copy(&_vehicle_status);
-	PX4_INFO("_vehicle_status.system_id=%d",_vehicle_status.system_id);
-	PX4_INFO("msg->sysid=%d",msg->sysid);
-	PX4_INFO("msg->compid=%d",msg->compid);
+	// PX4_INFO("_vehicle_status.system_id=%d",_vehicle_status.system_id);
+	// PX4_INFO("msg->sysid=%d",msg->sysid);
+	// PX4_INFO("msg->compid=%d",msg->compid);
 	if((_vehicle_status.system_id==1)&&(msg->sysid==55)&&(msg->compid==55))
 	{
 		PX4_INFO("dsada");
@@ -3514,13 +3517,13 @@ MavlinkReceiver::handle_message_gps_raw_int(mavlink_message_t *msg)
 	}
 	if((_vehicle_status.system_id!=1)&&(msg->sysid==1))
 	{
- a01_s _a01{};
+//  a01_s _a01{};
  mavlink_gps_raw_int_t _gps_raw = {};
  mavlink_msg_gps_raw_int_decode(msg,&_gps_raw);
- _a01.timestamp=hrt_absolute_time();
-	_a01.lat=_gps_raw.lat* 1e-7;
-	_a01.lon=_gps_raw.lon* 1e-7;
-	_a01_pub.publish(_a01);
+ //_a01.timestamp=hrt_absolute_time();
+// 	_a01.lat=_gps_raw.lat* 1e-7;
+// 	_a01.lon=_gps_raw.lon* 1e-7;
+// 	_a01_pub.publish(_a01);
 if(_gps_raw.hdg_acc==55)
 {
  a02_s _a02{};
@@ -3537,4 +3540,25 @@ _a02.stop_swarm=true;
 }
 	}
 
+}
+
+
+void
+MavlinkReceiver::handle_message_global_position_int(mavlink_message_t *msg)
+{
+	vehicle_status_s _vehicle_status{};
+	_vehicle_status_sub.copy(&_vehicle_status);
+	if((_vehicle_status.system_id!=1)&&(msg->sysid==1))
+	{
+ a01_s _a01{};
+ mavlink_global_position_int_t _global_position_int = {};
+ mavlink_msg_global_position_int_decode(msg,&_global_position_int);
+ _a01.timestamp=hrt_absolute_time();
+	_a01.lat=_global_position_int.lat* 1e-7;
+	_a01.lon=_global_position_int.lon* 1e-7;
+	_a01.yaw=_global_position_int.hdg* 1e-2;
+	_a01_pub.publish(_a01);
+	// PX4_INFO("_a01.lat=%lf",_a01.lat);
+	// PX4_INFO("_a01.lon=%lf",_a01.lon);
+	}
 }

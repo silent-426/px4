@@ -17,8 +17,8 @@ function spawn_model() {
 	N=$2 #Instance Number
 	X=$3
 	Y=$4
-	X=${X:=0.0}
-	Y=${Y:=$((3*${N}))}
+	X=${X:=$((-15*${N}))}
+	Y=${Y:=0.0}
 
 	SUPPORTED_MODELS=("iris" "plane" "standard_vtol" "rover" "r1_rover" "typhoon_h480")
 	if [[ " ${SUPPORTED_MODELS[*]} " != *"$MODEL"* ]];

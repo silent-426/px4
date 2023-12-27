@@ -59,9 +59,9 @@ swarm_point points[250];
 bool start_swarm=false;
 private:
     float_t xy_rad=1;
-    float_t fw_xy_rad=5;
+    float_t fw_xy_rad=50;
     float_t z_rad=1;
-    float_t fw_z_rad=5;
+    float_t fw_z_rad=50;
     float_t yaw_rad=0.1;
     bool time_flag=false;
 static control_instance* instance;

@@ -44,3 +44,4 @@ fw_autotune_attitude_control start vtol
 # Multicopter for now until we have something for VTOL
 #
 land_detector start vtol
+swarm_node start

@@ -95,6 +95,10 @@ void Swarm_Node::start_swarm_node()
 {
 	if(vehicle_id>1)
 	{
+// 		float airsp_trim=20.0f;
+// 		param_t param_airsp_trim= param_find("FW_AIRSPD_TRIM");
+//  param_set(param_airsp_trim, &airsp_trim);
+//    updateParams();
 	a02_s _a02{};
 	_a02_sub.copy(&_a02);
 	if(_a02.stop_swarm)
@@ -107,39 +111,110 @@ void Swarm_Node::start_swarm_node()
         _a01_sub.copy(&_target);
         //        _target.lat= 47.3978161;
         //        _target.lon=8.5460368;
+	// PX4_INFO("_target.lat=%lf",_target.lat);
+	// PX4_INFO("_target.lon=%lf",_target.lon);
+	// PX4_INFO("_target.yaw=%lf",(double)_target.yaw);
         _global_local_proj_ref.project(_target.lat,_target.lon,target_x,target_y);
-	control_instance::getInstance()->Control_posxyz(target_x+(vehicle_id-1)*5,target_y,begin_z-5);
+	PX4_INFO("target_x=%lf",(double)target_x);
+	PX4_INFO("target_y=%lf",(double)target_y);
+	PX4_INFO("_target.yaw=%lf",(double)_target.yaw);
+	fw_x=target_x-(vehicle_id-1)*10*cosf(matrix::wrap_2pi(_target.yaw));
+	fw_y=target_y-(vehicle_id-1)*10*sinf(matrix::wrap_2pi(_target.yaw));
+	PX4_INFO("fw_x=%lf",(double)fw_x);
+	PX4_INFO("fw_y=%lf",(double)fw_y);
+	control_instance::getInstance()->Control_posxyz(fw_x,fw_y,begin_z-50);
 	}
 	}
 	if(vehicle_id==1)
 	{
-		if((hrt_absolute_time()-time_tick>0)&&(hrt_absolute_time()-time_tick<time_tick_point1))
+		//POINT_STATE=point_state::assemble;
+		// if((hrt_absolute_time()-time_tick>0)&&(hrt_absolute_time()-time_tick<time_tick_point1))
+		// {
+		// control_instance::getInstance()->Control_posxyz(begin_x+100,begin_y,begin_z-50);
+		// }
+		// if((hrt_absolute_time()-time_tick>time_tick_point1)&&flag==0)
+		// {
+		// 	flag=1;
+		// 	POINT_STATE=point_state::point0;
+		// }
+		
+		switch(POINT_STATE)
 		{
-		control_instance::getInstance()->Control_posxyz(begin_x,begin_y,begin_z-5);
+		case point_state::point0:
+		if(control_instance::getInstance()->Control_posxyz(begin_x+500,begin_y,begin_z-50))
+		{
+			POINT_STATE=point_state::point1;
 		}
-		if((hrt_absolute_time()-time_tick>time_tick_point1)&&(hrt_absolute_time()-time_tick<time_tick_point2))
+		break;
+		case point_state::point1: 
+		if(control_instance::getInstance()->Control_posxyz(begin_x+500,begin_y-500,begin_z-50))
 		{
-		control_instance::getInstance()->Control_posxyz(begin_x+5,begin_y,begin_z-5);
+			POINT_STATE=point_state::point2;
 		}
-		if((hrt_absolute_time()-time_tick>time_tick_point2)&&(hrt_absolute_time()-time_tick<time_tick_point3))
+		break;
+		case point_state::point2:
+		if(control_instance::getInstance()->Control_posxyz(begin_x,begin_y-500,begin_z-50))
 		{
-		control_instance::getInstance()->Control_posxyz(begin_x+5,begin_y+5,begin_z-5);
+			POINT_STATE=point_state::point3;
 		}
-		if((hrt_absolute_time()-time_tick>time_tick_point3)&&(hrt_absolute_time()-time_tick<time_tick_point4))
+		break;
+		case point_state::point3:
+		if(control_instance::getInstance()->Control_posxyz(begin_x,begin_y,begin_z-50))
 		{
-		control_instance::getInstance()->Control_posxyz(begin_x,begin_y+5,begin_z-5);
+			POINT_STATE=point_state::land;
 		}
-		if((hrt_absolute_time()-time_tick>time_tick_point4)&&(hrt_absolute_time()-time_tick<time_tick_point5))
+		break;
+		// case point_state::point5:
+		// if(control_instance::getInstance()->Control_posxyz(begin_x,begin_y,begin_z-50))
+		// {
+		// 	POINT_STATE=point_state::land;
+		// 	// STATE=state::LAND;
+		// }
+		// break;
+		case point_state::land:
+		if(control_instance::getInstance()->Change_land())
 		{
-		control_instance::getInstance()->Control_posxyz(begin_x,begin_y,begin_z-5);
-		}
-		if(hrt_absolute_time()-time_tick>time_tick_point5)
-		{
-		control_instance::getInstance()->Change_land();
-		a02_s _a02;
+			POINT_STATE=point_state::end;
+					a02_s _a02;
 		_a02.stop_swarm=true;
 		_a02_pub.publish(_a02);
 		}
+		break;
+		case point_state::end:
+		a02_s _a02;
+		_a02.stop_swarm=true;
+		_a02_pub.publish(_a02);
+		break;
+	        default:
+	        break;
+		}
+		// if((hrt_absolute_time()-time_tick>0)&&(hrt_absolute_time()-time_tick<time_tick_point1))
+		// {
+		// control_instance::getInstance()->Control_posxyz(begin_x,begin_y,begin_z-50);
+		// }
+		// if((hrt_absolute_time()-time_tick>time_tick_point1)&&(hrt_absolute_time()-time_tick<time_tick_point2))
+		// {
+		// control_instance::getInstance()->Control_posxyz(begin_x+500,begin_y,begin_z-50);
+		// }
+		// if((hrt_absolute_time()-time_tick>time_tick_point2)&&(hrt_absolute_time()-time_tick<time_tick_point3))
+		// {
+		// control_instance::getInstance()->Control_posxyz(begin_x+500,begin_y+500,begin_z-50);
+		// }
+		// if((hrt_absolute_time()-time_tick>time_tick_point3)&&(hrt_absolute_time()-time_tick<time_tick_point4))
+		// {
+		// control_instance::getInstance()->Control_posxyz(begin_x,begin_y+500,begin_z-50);
+		// }
+		// if((hrt_absolute_time()-time_tick>time_tick_point4)&&(hrt_absolute_time()-time_tick<time_tick_point5))
+		// {
+		// control_instance::getInstance()->Control_posxyz(begin_x,begin_y,begin_z-50);
+		// }
+		// if(hrt_absolute_time()-time_tick>time_tick_point5)
+		// {
+		// control_instance::getInstance()->Change_land();
+		// a02_s _a02;
+		// _a02.stop_swarm=true;
+		// _a02_pub.publish(_a02);
+		// }
 	}
 
 }
@@ -182,11 +257,18 @@ void Swarm_Node::Run()
 	break;
 	case state::TAKEOFF:
 	//PX4_INFO("TAKEOFF");
-	if(control_instance::getInstance()->Control_posxyz(begin_x,begin_y,begin_z-5))
+	if(control_instance::getInstance()->Control_posxyz(begin_x,begin_y,begin_z-50))
 	{
 //		_sensor_gps_sub.copy(&_sensor_gps);
 // init_gps_time=_sensor_gps.time_utc_usec;
 //PX4_INFO("_sensor_gps.time_utc_usec=%lld",_sensor_gps.time_utc_usec);
+	STATE=state::MC_TO_FW;
+	}
+	break;
+	case state::MC_TO_FW:
+	//PX4_INFO("TAKEOFF");
+	if(control_instance::getInstance()->Control_mc_to_fw())
+	{
 	STATE=state::CONTROL;
 	}
 	break;
@@ -195,6 +277,7 @@ void Swarm_Node::Run()
 	//mc_control_instance::getInstance()->Control_lat_lon_alt(x,y,z);
 	start_swarm_node();
 	break;
+
 	case state::LAND:
 	//PX4_INFO("LAND");
 	control_instance::getInstance()->Change_land();

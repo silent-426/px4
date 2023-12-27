@@ -156,6 +156,7 @@ private:
 
 	void handle_message(mavlink_message_t *msg);
 	void handle_message_gps_raw_int(mavlink_message_t *msg);
+	void handle_message_global_position_int(mavlink_message_t *msg);
 	void handle_message_adsb_vehicle(mavlink_message_t *msg);
 	void handle_message_att_pos_mocap(mavlink_message_t *msg);
 	void handle_message_battery_status(mavlink_message_t *msg);

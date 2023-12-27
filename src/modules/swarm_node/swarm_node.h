@@ -20,6 +20,7 @@
 #include "control_node/control_instance.h"
 #include <uORB/topics/a01.h>
 #include <uORB/topics/a02.h>
+#include <uORB/topics/parameter_update.h>
 //mc_control_instance* mc_control_instance::instance = nullptr;
 #define M_PI_PRECISE	3.141592653589793238462643383279502884
 
@@ -57,7 +58,9 @@ enum state
 INIT=0,
 ARM_OFFBOARD,
 TAKEOFF,
+MC_TO_FW,
 CONTROL,
+FW_TO_MC,
 LAND,
 EMERGENCY
 };
@@ -72,13 +75,28 @@ fw_to_mc,
 mc_land,
 emerg
 };
+enum point_state
+{
+point0=0,
+point1,
+point2,
+point3,
+point4,
+point5,
+land,
+end,
+assemble
+};
+int flag=0;
+point_state POINT_STATE=point0;
+
 vtol_ctl_state VTOL_STATE=mc_takeoff;
 
     float begin_x;
     float begin_y;
     float begin_z;
-    float target_x;
-    float target_y;
+    float target_x,fw_x;
+    float target_y,fw_y;
     int vehicle_id=1;
 vehicle_local_position_s _vehicle_local_position;
 sensor_gps_s _sensor_gps;
@@ -88,12 +106,12 @@ trajectory_setpoint_s _trajectory_setpoint;
 	a02_s _start_flag{};
 MapProjection _global_local_proj_ref{};
 uint64_t time_tick=hrt_absolute_time();
-uint64_t time_tick_point1=10000000;
-uint64_t time_tick_point2=20000000;
-uint64_t time_tick_point3=30000000;
-uint64_t time_tick_point4=40000000;
-uint64_t time_tick_point5=50000000;
-uint64_t time_tick_land=60000000;
+uint64_t time_tick_point1=80000000;
+uint64_t time_tick_point2=100000000;
+uint64_t time_tick_point3=150000000;
+uint64_t time_tick_point4=200000000;
+uint64_t time_tick_point5=250000000;
+uint64_t time_tick_land=300000000;
 	// Publications
 	// uORB::Publication<orb_test_s> _orb_test_pub{ORB_ID(orb_test)};
 
