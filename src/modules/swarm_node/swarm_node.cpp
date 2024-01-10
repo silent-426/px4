@@ -45,7 +45,7 @@ bool Swarm_Node::swarm_node_init()
         //        _target.lat= 47.3978161;
         //        _target.lon=8.5460368;
 	    //   PX4_INFO("_start_flag.start_swarm=%d",_start_flag.start_swarm);
-        if((_vehicle_local_position.xy_valid))
+       if((_vehicle_local_position.xy_valid)&&_start_flag.start_swarm)
 {
 	 vehicle_status_s _vehicle_status;
 	    if(_vehicle_status_sub.copy(&_vehicle_status))
@@ -141,25 +141,24 @@ void Swarm_Node::start_swarm_node()
 		switch(POINT_STATE)
 		{
 		case point_state::point0:
-		if(control_instance::getInstance()->Control_posxyz(begin_x+50,begin_y,0))
+		if(control_instance::getInstance()->Control_posxyz(begin_x+500,begin_y,begin_z-50))
 		{
 			POINT_STATE=point_state::point1;
 		}
 		break;
 		case point_state::point1:
-		if(control_instance::getInstance()->Control_posxyz(begin_x+50,begin_y-50,0))
-		{
+		if(control_instance::getInstance()->Control_posxyz(begin_x+500,begin_y-500,begin_z-50))		{
 			POINT_STATE=point_state::point2;
 		}
 		break;
 		case point_state::point2:
-		if(control_instance::getInstance()->Control_posxyz(begin_x,begin_y-50,0))
+		if(control_instance::getInstance()->Control_posxyz(begin_x,begin_y-500,begin_z-50))
 		{
 			POINT_STATE=point_state::point3;
 		}
 		break;
 		case point_state::point3:
-		if(control_instance::getInstance()->Control_posxyz(begin_x,begin_y,0))
+		if(control_instance::getInstance()->Control_posxyz(begin_x,begin_y,begin_z-50))
 		{
 			POINT_STATE=point_state::land;
 		}
@@ -252,7 +251,7 @@ void Swarm_Node::Run()
 	//PX4_INFO("ARM_OFFBOARD");
 	if(control_instance::getInstance()->Change_offborad()&&control_instance::getInstance()->Arm_vehicle())
 	{
-	STATE=state::CONTROL;
+	STATE=state::TAKEOFF;
 	}
 	break;
 	case state::TAKEOFF:
