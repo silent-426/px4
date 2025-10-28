@@ -111,7 +111,8 @@ include(px4_parse_function_args)
 # git
 #
 include(px4_git)
-
+# 手动指定版本号（替换原有的PX4_VERSION定义）
+set(PX4_VERSION "1.14.0")  # 对应你的PX4版本（1.14.0）
 execute_process(
 	COMMAND git describe --exclude ext/* --always --tags
 	OUTPUT_VARIABLE PX4_GIT_TAG
