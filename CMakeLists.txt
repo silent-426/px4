@@ -108,31 +108,26 @@ list(APPEND CMAKE_MODULE_PATH ${PX4_SOURCE_DIR}/cmake)
 include(px4_parse_function_args)
 
 #=============================================================================
-# git
+# git & 版本号解析（仅修改此部分解决索引错误）
 #
 include(px4_git)
-# 手动指定版本号（替换原有的PX4_VERSION定义）
-set(PX4_VERSION "1.14.0")  # 对应你的PX4版本（1.14.0）
-execute_process(
-	COMMAND git describe --exclude ext/* --always --tags
-	OUTPUT_VARIABLE PX4_GIT_TAG
-	OUTPUT_STRIP_TRAILING_WHITESPACE
-	WORKING_DIRECTORY ${PX4_SOURCE_DIR}
-	)
 
-# git describe to X.Y.Z version
-string(REPLACE "." ";" VERSION_LIST ${PX4_GIT_TAG})
+# 手动指定PX4版本号（格式：X.Y.Z，根据实际版本调整）
+set(PX4_VERSION "1.14.0")
+# 构造版本标签（模拟git describe输出格式，如"v1.14.0"）
+set(PX4_GIT_TAG "v${PX4_VERSION}")
 
-# major version
+# 拆分版本号为 主版本.次版本.修订版本（避免Git依赖导致的列表越界）
+string(REPLACE "." ";" VERSION_LIST ${PX4_VERSION})
+
+# 主版本号（如1.14.0中的"1"）
 list(GET VERSION_LIST 0 PX4_VERSION_MAJOR)
-string(REPLACE "v" "" PX4_VERSION_MAJOR ${PX4_VERSION_MAJOR})
-# minor version
+# 次版本号（如1.14.0中的"14"）
 list(GET VERSION_LIST 1 PX4_VERSION_MINOR)
-# patch version
+# 修订版本号（如1.14.0中的"0"）
 list(GET VERSION_LIST 2 PX4_VERSION_PATCH)
-string(REPLACE "-" ";" PX4_VERSION_PATCH ${PX4_VERSION_PATCH})
-list(GET PX4_VERSION_PATCH 0 PX4_VERSION_PATCH)
 
+# 输出版本信息（验证解析结果）
 message(STATUS "PX4 version: ${PX4_GIT_TAG} (${PX4_VERSION_MAJOR}.${PX4_VERSION_MINOR}.${PX4_VERSION_PATCH})")
 
 define_property(GLOBAL PROPERTY PX4_MODULE_LIBRARIES

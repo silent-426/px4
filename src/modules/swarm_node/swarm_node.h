@@ -146,3 +146,4 @@ uORB::Publication<trajectory_setpoint_s>		_trajectory_setpoint_pub{ORB_ID(trajec
 
 	bool _armed{false};
 };
+
