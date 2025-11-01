@@ -91,93 +91,98 @@ bool Swarm_Node::swarm_node_init()
 
 void Swarm_Node::start_swarm_node()
 {
+    // 更新订阅数据
     _vehicle_local_position_sub.copy(&_vehicle_local_position);
     _a01_sub.copy(&_target);
     _a02_sub.copy(&_start_flag);
 
-    // 防止 begin_z 未初始化
-    if (!PX4_ISFINITE(begin_z) || fabsf(begin_z) < 1e-3f) {
+    // 保护 begin_z（避免与 0.0f 直接比较）
+    const float kZeps = 1e-3f;
+    if (!PX4_ISFINITE(begin_z) || fabsf(begin_z) < kZeps) {
         begin_z = _vehicle_local_position.z;
     }
 
-    // 主机执行正方形路径（保持原样）
-    if (vehicle_id == 1) {
-        switch (POINT_STATE)
+    // 处理 stop 命令
+    a02_s stop_msg{};
+    _a02_sub.copy(&stop_msg);
+    if (stop_msg.stop_swarm) {
+        control_instance::getInstance()->Change_land();
+        PX4_INFO("stop_swarm received id=%d", vehicle_id);
+        return;
+    }
+
+    // 统一的四边形顶点（与原 leader 的顶点相同）
+    // base goal（未加任何偏移）
+    float goal_x = begin_x;
+    float goal_y = begin_y;
+    const float goal_z = begin_z - 50.0f;
+
+    switch (POINT_STATE) {
+    case point_state::point0:
+        goal_x = begin_x + 500.0f;
+        goal_y = begin_y;
+        break;
+    case point_state::point1:
+        goal_x = begin_x + 500.0f;
+        goal_y = begin_y - 500.0f;
+        break;
+    case point_state::point2:
+        goal_x = begin_x;
+        goal_y = begin_y - 500.0f;
+        break;
+    case point_state::point3:
+        goal_x = begin_x;
+        goal_y = begin_y;
+        break;
+    case point_state::land:
+        // land 状态下调用降落命令并发布 stop 标志（与原逻辑一致）
+        if (control_instance::getInstance()->Change_land()) {
+            POINT_STATE = point_state::end;
+            a02_s _a02{};
+            _a02.stop_swarm = true;
+            _a02_pub.publish(_a02);
+        }
+        PX4_INFO("id=%d in LAND state", vehicle_id);
+        return;
+    case point_state::end:
+        // 已结束，保持 stop 发布（幂等）
         {
+            a02_s _a02{};
+            _a02.stop_swarm = true;
+            _a02_pub.publish(_a02);
+        }
+        PX4_INFO("id=%d in END state", vehicle_id);
+        return;
+    default:
+        break;
+    }
+
+    // 调试：打印本次目标
+    PX4_INFO("SWARM_UNIFORM id=%d POINT_STATE=%d goal=(%.2f, %.2f, %.2f)",
+             vehicle_id, (int)POINT_STATE, (double)goal_x, (double)goal_y, (double)goal_z);
+
+    // 调用控制器，若返回 true 表示到达该顶点 -> 推进状态（与 leader 行为一致）
+    bool reached = control_instance::getInstance()->Control_posxyz(goal_x, goal_y, goal_z);
+
+    if (reached) {
+        switch (POINT_STATE) {
         case point_state::point0:
-            if (control_instance::getInstance()->Control_posxyz(begin_x + 500, begin_y, begin_z - 50)) {
-                POINT_STATE = point_state::point1;
-            }
+            POINT_STATE = point_state::point1;
             break;
         case point_state::point1:
-            if (control_instance::getInstance()->Control_posxyz(begin_x + 500, begin_y - 500, begin_z - 50)) {
-                POINT_STATE = point_state::point2;
-            }
+            POINT_STATE = point_state::point2;
             break;
         case point_state::point2:
-            if (control_instance::getInstance()->Control_posxyz(begin_x, begin_y - 500, begin_z - 50)) {
-                POINT_STATE = point_state::point3;
-            }
+            POINT_STATE = point_state::point3;
             break;
         case point_state::point3:
-            if (control_instance::getInstance()->Control_posxyz(begin_x, begin_y, begin_z - 50)) {
-                POINT_STATE = point_state::land;
-            }
-            break;
-        case point_state::land:
-            if (control_instance::getInstance()->Change_land()) {
-                POINT_STATE = point_state::end;
-                a02_s msg{};
-                msg.stop_swarm = true;
-                _a02_pub.publish(msg);
-            }
+            POINT_STATE = point_state::land;
             break;
         default:
             break;
         }
-        return;
+        PX4_INFO("SWARM_UNIFORM id=%d reached -> next POINT_STATE=%d", vehicle_id, (int)POINT_STATE);
     }
-
-    // -------------------------------
-    // 从机逻辑
-    // -------------------------------
-    a02_s _a02msg;
-    _a02_sub.copy(&_a02msg);
-
-    if (_a02msg.stop_swarm) {
-        control_instance::getInstance()->Change_land();
-        return;
-    }
-
-    // 直接使用 leader yaw 和位置（真实的跟随法）
-    float leader_yaw = _target.yaw;
-    if (!PX4_ISFINITE(leader_yaw)) {
-        leader_yaw = 0.0f;
-    }
-
-    // 投影得到 leader 局部坐标（更新 target_x/target_y）
-    _global_local_proj_ref.project(_target.lat, _target.lon, target_x, target_y);
-
-    // 队形偏移（这里假设每个从机沿 leader 后方依次排开）
-    const float spacing = 10.0f;  // 每架间隔 10m
-    const float offset = (vehicle_id - 1) * spacing;
-
-    // 在 leader 的机体坐标系中：后方为 -x
-    float rel_x = -offset;
-    float rel_y = 0.0f;
-
-    // 坐标变换到世界坐标
-    float cos_yaw = cosf(leader_yaw);
-    float sin_yaw = sinf(leader_yaw);
-     fw_x = target_x + rel_x * cos_yaw - rel_y * sin_yaw;
-     fw_y = target_y + rel_x * sin_yaw + rel_y * cos_yaw;
-
-    // 调试信息
-    PX4_INFO("SWARM_FOLLOW id=%d leader_yaw=%.2f fw=(%.2f, %.2f) leader=(%.2f, %.2f)",
-             vehicle_id, (double)leader_yaw, (double)fw_x, (double)fw_y, (double)target_x, (double)target_y);
-
-    // 下发跟随目标
-    control_instance::getInstance()->Control_posxyz(fw_x, fw_y, begin_z - 50);
 }
 
 void Swarm_Node::Run()
