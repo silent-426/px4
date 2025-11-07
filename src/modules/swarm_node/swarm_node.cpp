@@ -111,70 +111,65 @@ void Swarm_Node::start_swarm_node()
         return;
     }
 
-    // ====== Formation and grouping settings ======
-    // Vehicles 1-3: group A (triangle)
-    // Vehicles 4-6: group B (triangle), group B is HEIGHT_DIFF meters below group A
-    // Both groups follow the same square of centers (正方形)，每个顶点为 group center
+    // ====== 编队与分组设置 ======
+    constexpr float SQUARE_HALF = 250.0f;       // 正方形半边长
+    constexpr float TRI_BASE_DIST = 20.0f;      // 三角形顶点相对组中心的基准距离
+    constexpr float GROUP_HEIGHT_DIFF = 15.0f;  // A/B组高度差（B组低15m）
+    constexpr float DRONE1_HEIGHT_OFFSET = 15.0f; // 1号机比2号机高15m
+    constexpr float GROUP_HORIZONTAL_OFFSET = 30.0f; // A/B组水平前后距离
 
-    constexpr float SQUARE_HALF = 250.0f; // 正方形半边长（原代码使用 500 偏移）
-    constexpr float TRI_BASE_DIST = 20.0f; // 三角形顶点相对中心的基准距离（可按需调整）
-    constexpr float HEIGHT_DIFF = 10.0f;  // 两组高度差（米）
-
-    // 预设三角形相对偏移（相对于组中心）——等边三角形的三个顶点
-    // 顶点间距约为 2*TRI_BASE_DIST
+    // 三角形相对偏移
     const float tri_off[3][2] = {
-        {0.0f, TRI_BASE_DIST},                              // 前方顶点
-        {-TRI_BASE_DIST * 0.86602540378f, -TRI_BASE_DIST/2}, // 左后
-        {TRI_BASE_DIST * 0.86602540378f, -TRI_BASE_DIST/2}   // 右后
+        {0.0f, TRI_BASE_DIST},                              // 前方顶点（2号机）
+        {-TRI_BASE_DIST * 0.86602540378f, -TRI_BASE_DIST/2}, // 左后（3号机）
+        {TRI_BASE_DIST * 0.86602540378f, -TRI_BASE_DIST/2}   // 右后（4号机）
     };
 
-    // 计算组别与组内索引（保证在 0..2）
-    int id = (int)vehicle_id; // 原始 id
-    int group = 0; // 0 -> A (1-3), 1 -> B (4-6)
-    int member_idx = 0; // 0/1/2
+    // 分组逻辑
+    int id = (int)vehicle_id;
+    int group = -1; // -1：1号机；0：A组四旋翼（2-4）；1：B组VTOL（5-7）
+    int member_idx = 0;
+    bool is_drone1 = (id == 1);
+    bool is_multicopter = (id >= 1 && id <= 4);  // 1-4号为四旋翼
+    bool is_vtol = (id >= 5 && id <= 7);         // 5-7号为VTOL
 
-    if (id >= 1 && id <= 3) {
-        group = 0; // A
-        member_idx = id - 1;
-    } else if (id >= 4 && id <= 6) {
-        group = 1; // B
-        member_idx = id - 4;
-    } else {
-        // 如果 ID 超出 1..6，使用循环映射
-        int rem = (id - 1) % 6; // 0..5
-        if (rem < 3) {
-            group = 0;
-            member_idx = rem;
-        } else {
-            group = 1;
-            member_idx = rem - 3;
-        }
+    if (id >= 2 && id <= 4) {
+        group = 0; // A组四旋翼（2-4）
+        member_idx = id - 2;
+    } else if (id >= 5 && id <= 7) {
+        group = 1; // B组VTOL（5-7）
+        member_idx = id - 5;
+    } else if (id > 7) {
+        // 超出7号的ID循环映射
+        int rem = (id - 2) % 6;
+        group = (rem < 3) ? 0 : 1;
+        member_idx = (rem < 3) ? rem : (rem - 3);
+        is_multicopter = (group == 0);
+        is_vtol = (group == 1);
     }
 
-    // base group center（不加任何偏移）
-    float group_center_x = begin_x;
-    float group_center_y = begin_y;
+    // 计算A组中心（正方形轨迹）
+    float group_a_center_x = begin_x;
+    float group_a_center_y = begin_y;
 
-    // 每个 POINT_STATE 对应正方形的一个中心点（四个顶点），保持与原逻辑相同的 500 米 边长
     switch (POINT_STATE) {
     case point_state::point0:
-        group_center_x = begin_x + 2*SQUARE_HALF;
-        group_center_y = begin_y;
+        group_a_center_x = begin_x + 2*SQUARE_HALF;
+        group_a_center_y = begin_y;
         break;
     case point_state::point1:
-        group_center_x = begin_x + 2*SQUARE_HALF;
-        group_center_y = begin_y - 2*SQUARE_HALF;
+        group_a_center_x = begin_x + 2*SQUARE_HALF;
+        group_a_center_y = begin_y - 2*SQUARE_HALF;
         break;
     case point_state::point2:
-        group_center_x = begin_x;
-        group_center_y = begin_y - 2*SQUARE_HALF;
+        group_a_center_x = begin_x;
+        group_a_center_y = begin_y - 2*SQUARE_HALF;
         break;
     case point_state::point3:
-        group_center_x = begin_x;
-        group_center_y = begin_y;
+        group_a_center_x = begin_x;
+        group_a_center_y = begin_y;
         break;
     case point_state::land:
-        // land 状态下调用降落命令并发布 stop 标志（与原逻辑一致）
         if (control_instance::getInstance()->Change_land()) {
             POINT_STATE = point_state::end;
             a02_s _a02{};
@@ -184,7 +179,6 @@ void Swarm_Node::start_swarm_node()
         PX4_INFO("id=%d in LAND state", vehicle_id);
         return;
     case point_state::end:
-        // 已结束，保持 stop 发布（幂等）
         {
             a02_s _a02{};
             _a02.stop_swarm = true;
@@ -196,18 +190,56 @@ void Swarm_Node::start_swarm_node()
         break;
     }
 
-    // 如果是组 B，则相对于组 A 下降 HEIGHT_DIFF 米
-    float goal_z = (group == 0) ? (begin_z - 50.0f) : (begin_z - 50.0f - HEIGHT_DIFF);
+    // 计算B组中心（A组前方）
+    float group_b_center_x = group_a_center_x;
+    float group_b_center_y = group_a_center_y - GROUP_HORIZONTAL_OFFSET;
 
-    // 将组中心（group_center_x/y）作为中心，再加上组内三角形偏移
-    float goal_x = group_center_x + tri_off[member_idx][0];
-    float goal_y = group_center_y + tri_off[member_idx][1];
+    // 初始化目标位置（默认值，避免未初始化）
+    float goal_x = _vehicle_local_position.x; // 当前位置（安全默认值）
+    float goal_y = _vehicle_local_position.y;
+    float goal_z = _vehicle_local_position.z;
+    const float base_z = begin_z - 50.0f; // A组基准高度
 
-    // 调试：打印本次目标
-    PX4_INFO("SWARM_TRIANGLE id=%d group=%d member=%d POINT_STATE=%d goal=(%.2f, %.2f, %.2f)",
-             vehicle_id, group, member_idx, (int)POINT_STATE, (double)goal_x, (double)goal_y, (double)goal_z);
+    // 根据分组和机型计算目标位置
+    if (is_drone1) {
+        // 1号机（四旋翼）：2号机正上方15m
+        float drone2_x = group_a_center_x + tri_off[0][0];
+        float drone2_y = group_a_center_y + tri_off[0][1];
+        goal_x = drone2_x;
+        goal_y = drone2_y;
+        goal_z = base_z + DRONE1_HEIGHT_OFFSET;
 
-    // 调用控制器，若返回 true 表示到达该顶点 -> 推进状态（与 leader 行为一致）
+    } else if (group == 0) {
+        // A组四旋翼（2-4号）
+        goal_x = group_a_center_x + tri_off[member_idx][0];
+        goal_y = group_a_center_y + tri_off[member_idx][1];
+        goal_z = base_z;
+
+    } else if (group == 1) {
+        // B组VTOL（5-7号）
+        goal_x = group_b_center_x + tri_off[member_idx][0];
+        goal_y = group_b_center_y + tri_off[member_idx][1];
+        goal_z = base_z - GROUP_HEIGHT_DIFF;
+
+    } else {
+        // 异常ID处理（如id < 1）
+        PX4_WARN("Invalid vehicle ID: %d, maintaining current position", id);
+        return;
+    }
+
+    // 调试信息
+    if (is_drone1) {
+        PX4_INFO("DRONE1(Quad) id=%d 位置: (%.2f, %.2f, %.2f) [2号机上方15m]",
+                 vehicle_id, (double)goal_x, (double)goal_y, (double)goal_z);
+    } else if (is_multicopter) {
+        PX4_INFO("GROUP_A(Quad) id=%d (成员%d) 位置: (%.2f, %.2f, %.2f)",
+                 vehicle_id, member_idx, (double)goal_x, (double)goal_y, (double)goal_z);
+    } else if (is_vtol) {
+        PX4_INFO("GROUP_B(VTOL) id=%d (成员%d) 位置: (%.2f, %.2f, %.2f)",
+                 vehicle_id, member_idx, (double)goal_x, (double)goal_y, (double)goal_z);
+    }
+
+    // 位置控制
     bool reached = control_instance::getInstance()->Control_posxyz(goal_x, goal_y, goal_z);
 
     if (reached) {
@@ -227,7 +259,7 @@ void Swarm_Node::start_swarm_node()
         default:
             break;
         }
-        PX4_INFO("SWARM_TRIANGLE id=%d reached -> next POINT_STATE=%d", vehicle_id, (int)POINT_STATE);
+        PX4_INFO("id=%d 到达目标 -> 下一状态=%d", vehicle_id, (int)POINT_STATE);
     }
 }
 
@@ -263,11 +295,24 @@ void Swarm_Node::Run()
         break;
     case state::TAKEOFF:
         if(control_instance::getInstance()->Control_posxyz(begin_x, begin_y, begin_z - 50)) {
-            STATE=state::MC_TO_FW;
+            // 根据机型选择下一状态
+            if (vehicle_id >= 5 && vehicle_id <= 7) {
+                // VTOL需要转换到固定翼模式
+                STATE=state::MC_TO_FW;
+            } else {
+                // 四旋翼直接进入控制状态
+                STATE=state::CONTROL;
+            }
         }
         break;
     case state::MC_TO_FW:
-        if(control_instance::getInstance()->Control_mc_to_fw()) {
+        // 只有VTOL（5-7号）执行模式转换
+        if (vehicle_id >= 5 && vehicle_id <= 7) {
+            if(control_instance::getInstance()->Control_mc_to_fw()) {
+                STATE=state::CONTROL;
+            }
+        } else {
+            // 四旋翼跳过此状态
             STATE=state::CONTROL;
         }
         break;
