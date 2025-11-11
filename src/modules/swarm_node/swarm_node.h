@@ -83,6 +83,7 @@ point2,
 point3,
 point4,
 point5,
+point6,
 land,
 end,
 assemble

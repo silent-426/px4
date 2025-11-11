@@ -36,6 +36,7 @@ public:
 	bool Control_mc_to_fw();
 	bool Control_fw_to_mc();
 	bool hold_curr_pos(float time_s) ;
+	void SetYaw(float new_yaw_rad);
 	void Pubctl() ;
 	static control_instance* getInstance()
 	{
@@ -81,7 +82,7 @@ control_instance(){};
     uORB::Subscription _vehicle_status_sub{ORB_ID(vehicle_status)};
     uORB::Subscription _vtol_vehicle_status_sub{ORB_ID(vtol_vehicle_status)};
     uORB::Subscription _vehicle_local_position_sub{ORB_ID(vehicle_local_position)};
-
+uORB::Publication<vehicle_attitude_setpoint_s>      _att_sp_pub{ORB_ID(vehicle_attitude_setpoint)};
      uORB::Publication<offboard_control_mode_s>		_offboard_control_mode_pub{ORB_ID(offboard_control_mode)};
        uORB::Publication<vehicle_command_s>		_vehicle_command_pub{ORB_ID(vehicle_command)};
        uORB::Publication<position_setpoint_triplet_s>		_position_setpoint_triplet_pub{ORB_ID(position_setpoint_triplet)};

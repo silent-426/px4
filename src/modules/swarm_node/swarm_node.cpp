@@ -4,7 +4,8 @@
 
 Swarm_Node::Swarm_Node() :
     ModuleParams(nullptr),
-    ScheduledWorkItem(MODULE_NAME, px4::wq_configurations::swarm_node)
+    ScheduledWorkItem(MODULE_NAME, px4::wq_configurations::swarm_node),
+    POINT_STATE(point0)  // 所有无人机初始状态统一为第1点
 {
 }
 
@@ -16,15 +17,15 @@ Swarm_Node::~Swarm_Node()
 
 bool Swarm_Node::init()
 {
-    ScheduleOnInterval(20000_us); // 20ms 间隔
-    PX4_INFO("Swarm_Node initialized");
+    ScheduleOnInterval(20000_us); // 20ms 间隔，所有无人机同步控制频率
+    PX4_INFO("Swarm_Node initialized (id=%d)", vehicle_id);
     return true;
 }
 
 bool Swarm_Node::takeoff()
 {
     bool ret = control_instance::getInstance()->Control_posxyz(begin_x, begin_y, begin_z - 5);
-    PX4_INFO("takeoff() ret=%d", (int)ret);
+    PX4_INFO("takeoff() ret=%d (id=%d)", (int)ret, vehicle_id);
     return ret;
 }
 
@@ -32,14 +33,14 @@ bool Swarm_Node::arm_offboard()
 {
     bool ok = control_instance::getInstance()->Change_offborad();
     ok = ok && control_instance::getInstance()->Arm_vehicle();
-    PX4_INFO("arm_offboard() ret=%d", (int)ok);
+    PX4_INFO("arm_offboard() ret=%d (id=%d)", (int)ok, vehicle_id);
     return ok;
 }
 
 bool Swarm_Node::swarm_node_init()
 {
     if (!_vehicle_local_position_sub.copy(&_vehicle_local_position)) {
-        PX4_WARN("no local_position");
+        PX4_WARN("no local_position (id=%d)", vehicle_id);
         return false;
     }
 
@@ -52,15 +53,18 @@ bool Swarm_Node::swarm_node_init()
 
     vehicle_status_s vehicle_status{};
     if (!_vehicle_status_sub.copy(&vehicle_status)) {
-        PX4_WARN("no vehicle_status");
+        PX4_WARN("no vehicle_status (id=%d)", vehicle_id);
         return false;
     }
     vehicle_id = vehicle_status.system_id;
-    PX4_INFO("vehicle_id=%d", vehicle_id);
+    PX4_INFO("vehicle_id=%d 初始化完成，悬停点作为第1点", vehicle_id);
 
+    // 记录各自悬停点（第1点和第7点）
     begin_x = _vehicle_local_position.x;
     begin_y = _vehicle_local_position.y;
     begin_z = _vehicle_local_position.z;
+    PX4_INFO("id=%d 悬停点坐标: (%.2f, %.2f, %.2f)", 
+             vehicle_id, (double)begin_x, (double)begin_y, (double)begin_z);
 
     _global_local_proj_ref.initReference(_vehicle_local_position.ref_lat,
                                          _vehicle_local_position.ref_lon,
@@ -80,67 +84,76 @@ bool Swarm_Node::swarm_node_init()
     float dx = _vehicle_local_position.x - target_x;
     float dy = _vehicle_local_position.y - target_y;
     float dist = sqrtf(dx*dx + dy*dy);
-    PX4_INFO("dist_to_target=%.2f m", (double)dist);
-
-    if (vehicle_id > 1 && dist > 200.0f) {
-        PX4_WARN("vehicle %d far from target (%.1fm)", vehicle_id, (double)dist);
-    }
+    PX4_INFO("id=%d 到目标距离=%.2f m", vehicle_id, (double)dist);
 
     return true;
 }
 
 void Swarm_Node::start_swarm_node()
 {
-    // 更新订阅数据
+    // 更新订阅数据（所有无人机同步更新）
     _vehicle_local_position_sub.copy(&_vehicle_local_position);
     _a01_sub.copy(&_target);
     _a02_sub.copy(&_start_flag);
 
-    // 保护 begin_z（避免与 0.0f 直接比较）
+    // 保护 begin_z
     const float kZeps = 1e-3f;
     if (!PX4_ISFINITE(begin_z) || fabsf(begin_z) < kZeps) {
         begin_z = _vehicle_local_position.z;
     }
 
-    // 处理 stop 命令
+    // 处理 stop 命令（所有无人机统一响应）
     a02_s stop_msg{};
     _a02_sub.copy(&stop_msg);
     if (stop_msg.stop_swarm) {
         control_instance::getInstance()->Change_land();
-        PX4_INFO("stop_swarm received id=%d", vehicle_id);
+        PX4_INFO("id=%d 收到停止命令，开始降落", vehicle_id);
         return;
     }
 
-    // ====== 编队与分组设置 ======
-    constexpr float SQUARE_HALF = 250.0f;       // 正方形半边长
-    constexpr float TRI_BASE_DIST = 20.0f;      // 三角形顶点相对组中心的基准距离
-    constexpr float GROUP_HEIGHT_DIFF = 15.0f;  // A/B组高度差（B组低15m）
-    constexpr float DRONE1_HEIGHT_OFFSET = 15.0f; // 1号机比2号机高15m
-    constexpr float GROUP_HORIZONTAL_OFFSET = 30.0f; // A/B组水平前后距离
+    // ====== 所有无人机共享7点轨迹逻辑 ======
+    constexpr float HEX_RADIUS = 250.0f;         // 统一六边形大小
+    constexpr float TRI_BASE_DIST = 20.0f;      // 三角形编队偏移（所有组共用）
+    constexpr float GROUP_HEIGHT_DIFF = 15.0f;  // 高度差（不变）
+    constexpr float DRONE1_HEIGHT_OFFSET = 15.0f;
+    constexpr float GROUP_HORIZONTAL_OFFSET = 30.0f;
 
-    // 三角形相对偏移
-    const float tri_off[3][2] = {
-        {0.0f, TRI_BASE_DIST},                              // 前方顶点（2号机）
-        {-TRI_BASE_DIST * 0.86602540378f, -TRI_BASE_DIST/2}, // 左后（3号机）
-        {TRI_BASE_DIST * 0.86602540378f, -TRI_BASE_DIST/2}   // 右后（4号机）
+    // 6个顶点坐标（第1-6点），第7点=第1点（所有无人机共用此轨迹模板）
+    const float hex_vertices[6][2] = {
+        {HEX_RADIUS * cosf(0),           HEX_RADIUS * sinf(0)},           // 第1点（point0）
+        {HEX_RADIUS * cosf(M_PI/3),      HEX_RADIUS * sinf(M_PI/3)},      // 第2点（point1）
+        {HEX_RADIUS * cosf(2*M_PI/3),    HEX_RADIUS * sinf(2*M_PI/3)},    // 第3点（point2）
+        {HEX_RADIUS * cosf(M_PI),        HEX_RADIUS * sinf(M_PI)},        // 第4点（point3）
+        {HEX_RADIUS * cosf(4*M_PI/3),    HEX_RADIUS * sinf(4*M_PI/3)},    // 第5点（point4）
+        {HEX_RADIUS * cosf(5*M_PI/3),    HEX_RADIUS * sinf(5*M_PI/3)}     // 第6点（point5）
     };
 
-    // 分组逻辑
+    // 计算当前无人机的轨迹中心（确保第1点=自身悬停点）
+    const float hex_center_x = begin_x - hex_vertices[0][0];
+    const float hex_center_y = begin_y - hex_vertices[0][1];
+
+    // 三角形编队偏移（所有组共用，确保编队相对中心位置不变）
+    const float tri_off[3][2] = {
+        {0.0f, TRI_BASE_DIST},                              // 2号机/5号机
+        {-TRI_BASE_DIST * 0.86602540378f, -TRI_BASE_DIST/2}, // 3号机/6号机
+        {TRI_BASE_DIST * 0.86602540378f, -TRI_BASE_DIST/2}   // 4号机/7号机
+    };
+
+    // 分组逻辑（仅决定相对中心的偏移，不改变轨迹节奏）
     int id = (int)vehicle_id;
-    int group = -1; // -1：1号机；0：A组四旋翼（2-4）；1：B组VTOL（5-7）
+    int group = -1; 
     int member_idx = 0;
     bool is_drone1 = (id == 1);
-    bool is_multicopter = (id >= 1 && id <= 4);  // 1-4号为四旋翼
-    bool is_vtol = (id >= 5 && id <= 7);         // 5-7号为VTOL
-
+    bool is_multicopter = (id >= 1 && id <= 4);
+    bool is_vtol = (id >= 5 && id <= 7);
+(void) is_vtol;
     if (id >= 2 && id <= 4) {
-        group = 0; // A组四旋翼（2-4）
+        group = 0; // A组（四旋翼）
         member_idx = id - 2;
     } else if (id >= 5 && id <= 7) {
-        group = 1; // B组VTOL（5-7）
+        group = 1; // B组（VTOL）
         member_idx = id - 5;
     } else if (id > 7) {
-        // 超出7号的ID循环映射
         int rem = (id - 2) % 6;
         group = (rem < 3) ? 0 : 1;
         member_idx = (rem < 3) ? rem : (rem - 3);
@@ -148,118 +161,120 @@ void Swarm_Node::start_swarm_node()
         is_vtol = (group == 1);
     }
 
-    // 计算A组中心（正方形轨迹）
-    float group_a_center_x = begin_x;
-    float group_a_center_y = begin_y;
+    // 计算组中心（所有组同步跟随7点轨迹）
+    float group_center_x = hex_center_x;
+    float group_center_y = hex_center_y;
 
+    // 【核心修正：所有组（A/B组+1号机）共用同一套7点轨迹切换逻辑】
     switch (POINT_STATE) {
-    case point_state::point0:
-        group_a_center_x = begin_x + 2*SQUARE_HALF;
-        group_a_center_y = begin_y;
+    case point0:  // 第1点（悬停点）
+        group_center_x = hex_center_x + hex_vertices[0][0];
+        group_center_y = hex_center_y + hex_vertices[0][1];
         break;
-    case point_state::point1:
-        group_a_center_x = begin_x + 2*SQUARE_HALF;
-        group_a_center_y = begin_y - 2*SQUARE_HALF;
+    case point1:  // 第2点
+        group_center_x = hex_center_x + hex_vertices[1][0];
+        group_center_y = hex_center_y + hex_vertices[1][1];
         break;
-    case point_state::point2:
-        group_a_center_x = begin_x;
-        group_a_center_y = begin_y - 2*SQUARE_HALF;
+    case point2:  // 第3点
+        group_center_x = hex_center_x + hex_vertices[2][0];
+        group_center_y = hex_center_y + hex_vertices[2][1];
         break;
-    case point_state::point3:
-        group_a_center_x = begin_x;
-        group_a_center_y = begin_y;
+    case point3:  // 第4点
+        group_center_x = hex_center_x + hex_vertices[3][0];
+        group_center_y = hex_center_y + hex_vertices[3][1];
         break;
-    case point_state::land:
+    case point4:  // 第5点
+        group_center_x = hex_center_x + hex_vertices[4][0];
+        group_center_y = hex_center_y + hex_vertices[4][1];
+        break;
+    case point5:  // 第6点
+        group_center_x = hex_center_x + hex_vertices[5][0];
+        group_center_y = hex_center_y + hex_vertices[5][1];
+        break;
+    case point6:  // 第7点（与第1点重合）
+        group_center_x = hex_center_x + hex_vertices[0][0];
+        group_center_y = hex_center_y + hex_vertices[0][1];
+        break;
+    case land:
         if (control_instance::getInstance()->Change_land()) {
-            POINT_STATE = point_state::end;
+            POINT_STATE = end;
             a02_s _a02{};
             _a02.stop_swarm = true;
             _a02_pub.publish(_a02);
         }
-        PX4_INFO("id=%d in LAND state", vehicle_id);
+        PX4_INFO("id=%d 进入降落状态", vehicle_id);
         return;
-    case point_state::end:
+    case end:
         {
             a02_s _a02{};
             _a02.stop_swarm = true;
             _a02_pub.publish(_a02);
         }
-        PX4_INFO("id=%d in END state", vehicle_id);
+        PX4_INFO("id=%d 任务结束", vehicle_id);
         return;
     default:
         break;
     }
 
-    // 计算B组中心（A组前方）
-    float group_b_center_x = group_a_center_x;
-    float group_b_center_y = group_a_center_y - GROUP_HORIZONTAL_OFFSET;
+    // B组中心相对于A组偏移（但跟随同一轨迹点）
+    float group_b_center_x = group_center_x;
+    float group_b_center_y = group_center_y - GROUP_HORIZONTAL_OFFSET;
 
-    // 初始化目标位置（默认值，避免未初始化）
-    float goal_x = _vehicle_local_position.x; // 当前位置（安全默认值）
+    // 计算目标位置（所有无人机基于当前轨迹点计算）
+    float goal_x = _vehicle_local_position.x;
     float goal_y = _vehicle_local_position.y;
     float goal_z = _vehicle_local_position.z;
-    const float base_z = begin_z - 50.0f; // A组基准高度
+    const float base_z = begin_z - 50.0f; // 基准高度（所有无人机基于自身悬停点计算）
 
-    // 根据分组和机型计算目标位置
     if (is_drone1) {
-        // 1号机（四旋翼）：2号机正上方15m
-        float drone2_x = group_a_center_x + tri_off[0][0];
-        float drone2_y = group_a_center_y + tri_off[0][1];
+        // 1号机：跟随A组2号机位置的正上方，与A组同步轨迹点
+        float drone2_x = group_center_x + tri_off[0][0];
+        float drone2_y = group_center_y + tri_off[0][1];
         goal_x = drone2_x;
         goal_y = drone2_y;
         goal_z = base_z + DRONE1_HEIGHT_OFFSET;
 
     } else if (group == 0) {
-        // A组四旋翼（2-4号）
-        goal_x = group_a_center_x + tri_off[member_idx][0];
-        goal_y = group_a_center_y + tri_off[member_idx][1];
+        // A组（2-4号）：基于A组中心的三角形偏移，同步轨迹点
+        goal_x = group_center_x + tri_off[member_idx][0];
+        goal_y = group_center_y + tri_off[member_idx][1];
         goal_z = base_z;
 
     } else if (group == 1) {
-        // B组VTOL（5-7号）
+        // B组（5-7号）：基于B组中心的三角形偏移，同步轨迹点
         goal_x = group_b_center_x + tri_off[member_idx][0];
         goal_y = group_b_center_y + tri_off[member_idx][1];
         goal_z = base_z - GROUP_HEIGHT_DIFF;
 
     } else {
-        // 异常ID处理（如id < 1）
-        PX4_WARN("Invalid vehicle ID: %d, maintaining current position", id);
+        PX4_WARN("id=%d 无效ID，保持当前位置", id);
         return;
     }
 
-    // 调试信息
-    if (is_drone1) {
-        PX4_INFO("DRONE1(Quad) id=%d 位置: (%.2f, %.2f, %.2f) [2号机上方15m]",
-                 vehicle_id, (double)goal_x, (double)goal_y, (double)goal_z);
-    } else if (is_multicopter) {
-        PX4_INFO("GROUP_A(Quad) id=%d (成员%d) 位置: (%.2f, %.2f, %.2f)",
-                 vehicle_id, member_idx, (double)goal_x, (double)goal_y, (double)goal_z);
-    } else if (is_vtol) {
-        PX4_INFO("GROUP_B(VTOL) id=%d (成员%d) 位置: (%.2f, %.2f, %.2f)",
-                 vehicle_id, member_idx, (double)goal_x, (double)goal_y, (double)goal_z);
-    }
+    // 调试信息：明确显示所有无人机的当前点序号
+    PX4_INFO("id=%d 类型=%s 第%d点目标: (%.2f, %.2f, %.2f)",
+             vehicle_id,
+             is_drone1 ? "1号机" : (is_multicopter ? "A组" : "B组"),
+             POINT_STATE + 1,
+             (double)goal_x, (double)goal_y, (double)goal_z);
 
-    // 位置控制
+    // 位置控制（所有无人机使用相同的到达判断逻辑）
     bool reached = control_instance::getInstance()->Control_posxyz(goal_x, goal_y, goal_z);
 
+    // 所有无人机同步切换轨迹点（到达当前点后统一进入下一点）
     if (reached) {
         switch (POINT_STATE) {
-        case point_state::point0:
-            POINT_STATE = point_state::point1;
-            break;
-        case point_state::point1:
-            POINT_STATE = point_state::point2;
-            break;
-        case point_state::point2:
-            POINT_STATE = point_state::point3;
-            break;
-        case point_state::point3:
-            POINT_STATE = point_state::land;
-            break;
-        default:
-            break;
+        case point0: POINT_STATE = point1; break;
+        case point1: POINT_STATE = point2; break;
+        case point2: POINT_STATE = point3; break;
+        case point3: POINT_STATE = point4; break;
+        case point4: POINT_STATE = point5; break;
+        case point5: POINT_STATE = point6; break;
+        case point6: POINT_STATE = land; break;
+        default: break;
         }
-        PX4_INFO("id=%d 到达目标 -> 下一状态=%d", vehicle_id, (int)POINT_STATE);
+        PX4_INFO("id=%d 已到达第%d点，切换到第%d点",
+                 vehicle_id, POINT_STATE, POINT_STATE + 1);
     }
 }
 
@@ -280,44 +295,45 @@ void Swarm_Node::Run()
         updateParams();
     }
 
+    // 所有无人机状态机流程统一
     switch(STATE)
     {
     case state::INIT:
         if(swarm_node_init()) {
             STATE=state::ARM_OFFBOARD;
+            PX4_INFO("id=%d 初始化完成，进入解锁模式", vehicle_id);
         }
         break;
     case state::ARM_OFFBOARD:
         if(control_instance::getInstance()->Change_offborad() && 
            control_instance::getInstance()->Arm_vehicle()) {
             STATE=state::TAKEOFF;
+            PX4_INFO("id=%d 已解锁并进入offboard模式，准备起飞", vehicle_id);
         }
         break;
     case state::TAKEOFF:
+        // 所有无人机起飞到自身悬停点（第1点）
         if(control_instance::getInstance()->Control_posxyz(begin_x, begin_y, begin_z - 50)) {
-            // 根据机型选择下一状态
+            PX4_INFO("id=%d 已到达悬停点（第1点）", vehicle_id);
             if (vehicle_id >= 5 && vehicle_id <= 7) {
-                // VTOL需要转换到固定翼模式
                 STATE=state::MC_TO_FW;
             } else {
-                // 四旋翼直接进入控制状态
                 STATE=state::CONTROL;
             }
         }
         break;
     case state::MC_TO_FW:
-        // 只有VTOL（5-7号）执行模式转换
         if (vehicle_id >= 5 && vehicle_id <= 7) {
             if(control_instance::getInstance()->Control_mc_to_fw()) {
                 STATE=state::CONTROL;
+                PX4_INFO("id=%d 已切换到固定翼模式，开始轨迹飞行", vehicle_id);
             }
         } else {
-            // 四旋翼跳过此状态
             STATE=state::CONTROL;
         }
         break;
     case state::CONTROL:
-        start_swarm_node();
+        start_swarm_node(); // 所有无人机进入7点轨迹飞行
         break;
     case state::LAND:
         control_instance::getInstance()->Change_land();
