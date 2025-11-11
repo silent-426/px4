@@ -115,8 +115,7 @@ void Swarm_Node::start_swarm_node()
     constexpr float HEX_RADIUS = 250.0f;         // 统一六边形大小
     constexpr float TRI_BASE_DIST = 20.0f;      // 三角形编队偏移（所有组共用）
     constexpr float GROUP_HEIGHT_DIFF = 15.0f;  // 高度差（不变）
-    constexpr float DRONE1_HEIGHT_OFFSET = 15.0f;
-    constexpr float GROUP_HORIZONTAL_OFFSET = 30.0f;
+    constexpr float GROUP_HORIZONTAL_OFFSET = 30.0f;  // 组间水平偏移
 
     // 6个顶点坐标（第1-6点），第7点=第1点（所有无人机共用此轨迹模板）
     const float hex_vertices[6][2] = {
@@ -134,38 +133,40 @@ void Swarm_Node::start_swarm_node()
 
     // 三角形编队偏移（所有组共用，确保编队相对中心位置不变）
     const float tri_off[3][2] = {
-        {0.0f, TRI_BASE_DIST},                              // 2号机/5号机
-        {-TRI_BASE_DIST * 0.86602540378f, -TRI_BASE_DIST/2}, // 3号机/6号机
-        {TRI_BASE_DIST * 0.86602540378f, -TRI_BASE_DIST/2}   // 4号机/7号机
+        {0.0f, TRI_BASE_DIST},                              // 组内1号成员（原2号/5号机）
+        {-TRI_BASE_DIST * 0.86602540378f, -TRI_BASE_DIST/2}, // 组内2号成员（原3号/6号机）
+        {TRI_BASE_DIST * 0.86602540378f, -TRI_BASE_DIST/2}   // 组内3号成员（原4号/7号机）
     };
 
-    // 分组逻辑（仅决定相对中心的偏移，不改变轨迹节奏）
+    // 【核心修改：去掉1号机，编号前移，两组各3架】
     int id = (int)vehicle_id;
     int group = -1; 
     int member_idx = 0;
-    bool is_drone1 = (id == 1);
-    bool is_multicopter = (id >= 1 && id <= 4);
-    bool is_vtol = (id >= 5 && id <= 7);
-(void) is_vtol;
-    if (id >= 2 && id <= 4) {
+    bool is_multicopter = (id >= 1 && id <= 3);  // A组（原2-4号→新1-3号，四旋翼）
+    bool is_vtol = (id >= 4 && id <= 6);         // B组（原5-7号→新4-6号，VTOL）
+
+    if (is_multicopter) {
         group = 0; // A组（四旋翼）
-        member_idx = id - 2;
-    } else if (id >= 5 && id <= 7) {
+        member_idx = id - 1;  // 新1号→0，新2号→1，新3号→2（对应tri_off的3个顶点）
+    } else if (is_vtol) {
         group = 1; // B组（VTOL）
-        member_idx = id - 5;
-    } else if (id > 7) {
-        int rem = (id - 2) % 6;
+        member_idx = id - 4;  // 新4号→0，新5号→1，新6号→2（对应tri_off的3个顶点）
+    } else if (id > 6) {  // 扩展ID逻辑同步前移
+        int rem = (id - 1) % 6;  // 原(id-2)%6 → 新(id-1)%6（因去掉1号机）
         group = (rem < 3) ? 0 : 1;
         member_idx = (rem < 3) ? rem : (rem - 3);
         is_multicopter = (group == 0);
         is_vtol = (group == 1);
+    } else {
+        PX4_WARN("id=%d 无效ID，保持当前位置", id);
+        return;
     }
 
     // 计算组中心（所有组同步跟随7点轨迹）
     float group_center_x = hex_center_x;
     float group_center_y = hex_center_y;
 
-    // 【核心修正：所有组（A/B组+1号机）共用同一套7点轨迹切换逻辑】
+    // 所有组共用同一套7点轨迹切换逻辑（不变）
     switch (POINT_STATE) {
     case point0:  // 第1点（悬停点）
         group_center_x = hex_center_x + hex_vertices[0][0];
@@ -216,32 +217,24 @@ void Swarm_Node::start_swarm_node()
         break;
     }
 
-    // B组中心相对于A组偏移（但跟随同一轨迹点）
+    // B组中心相对于A组偏移（但跟随同一轨迹点，不变）
     float group_b_center_x = group_center_x;
     float group_b_center_y = group_center_y - GROUP_HORIZONTAL_OFFSET;
 
-    // 计算目标位置（所有无人机基于当前轨迹点计算）
+    // 计算目标位置（去掉1号机逻辑，仅保留两组三角形）
     float goal_x = _vehicle_local_position.x;
     float goal_y = _vehicle_local_position.y;
     float goal_z = _vehicle_local_position.z;
-    const float base_z = begin_z - 50.0f; // 基准高度（所有无人机基于自身悬停点计算）
+    const float base_z = begin_z - 50.0f; // 基准高度（不变）
 
-    if (is_drone1) {
-        // 1号机：跟随A组2号机位置的正上方，与A组同步轨迹点
-        float drone2_x = group_center_x + tri_off[0][0];
-        float drone2_y = group_center_y + tri_off[0][1];
-        goal_x = drone2_x;
-        goal_y = drone2_y;
-        goal_z = base_z + DRONE1_HEIGHT_OFFSET;
-
-    } else if (group == 0) {
-        // A组（2-4号）：基于A组中心的三角形偏移，同步轨迹点
+    if (group == 0) {
+        // A组（新1-3号）：基于A组中心的三角形偏移
         goal_x = group_center_x + tri_off[member_idx][0];
         goal_y = group_center_y + tri_off[member_idx][1];
         goal_z = base_z;
 
     } else if (group == 1) {
-        // B组（5-7号）：基于B组中心的三角形偏移，同步轨迹点
+        // B组（新4-6号）：基于B组中心的三角形偏移
         goal_x = group_b_center_x + tri_off[member_idx][0];
         goal_y = group_b_center_y + tri_off[member_idx][1];
         goal_z = base_z - GROUP_HEIGHT_DIFF;
@@ -251,17 +244,17 @@ void Swarm_Node::start_swarm_node()
         return;
     }
 
-    // 调试信息：明确显示所有无人机的当前点序号
+    // 调试信息：更新分组描述（去掉1号机）
     PX4_INFO("id=%d 类型=%s 第%d点目标: (%.2f, %.2f, %.2f)",
              vehicle_id,
-             is_drone1 ? "1号机" : (is_multicopter ? "A组" : "B组"),
+             is_multicopter ? "A组(四旋翼)" : "B组(VTOL)",
              POINT_STATE + 1,
              (double)goal_x, (double)goal_y, (double)goal_z);
 
-    // 位置控制（所有无人机使用相同的到达判断逻辑）
+    // 位置控制（所有无人机使用相同的到达判断逻辑，不变）
     bool reached = control_instance::getInstance()->Control_posxyz(goal_x, goal_y, goal_z);
 
-    // 所有无人机同步切换轨迹点（到达当前点后统一进入下一点）
+    // 所有无人机同步切换轨迹点（不变）
     if (reached) {
         switch (POINT_STATE) {
         case point0: POINT_STATE = point1; break;
@@ -295,7 +288,7 @@ void Swarm_Node::Run()
         updateParams();
     }
 
-    // 所有无人机状态机流程统一
+    // 所有无人机状态机流程统一（调整VTOL组ID范围）
     switch(STATE)
     {
     case state::INIT:
@@ -315,7 +308,7 @@ void Swarm_Node::Run()
         // 所有无人机起飞到自身悬停点（第1点）
         if(control_instance::getInstance()->Control_posxyz(begin_x, begin_y, begin_z - 50)) {
             PX4_INFO("id=%d 已到达悬停点（第1点）", vehicle_id);
-            if (vehicle_id >= 5 && vehicle_id <= 7) {
+            if (vehicle_id >= 4 && vehicle_id <= 6) {  // VTOL组ID范围更新为4-6
                 STATE=state::MC_TO_FW;
             } else {
                 STATE=state::CONTROL;
@@ -323,7 +316,7 @@ void Swarm_Node::Run()
         }
         break;
     case state::MC_TO_FW:
-        if (vehicle_id >= 5 && vehicle_id <= 7) {
+        if (vehicle_id >= 4 && vehicle_id <= 6) {  // VTOL组ID范围更新为4-6
             if(control_instance::getInstance()->Control_mc_to_fw()) {
                 STATE=state::CONTROL;
                 PX4_INFO("id=%d 已切换到固定翼模式，开始轨迹飞行", vehicle_id);
@@ -375,7 +368,7 @@ int Swarm_Node::custom_command(int argc, char *argv[])
 int Swarm_Node::print_usage(const char *reason)
 {
     if (reason) PX4_WARN("%s", reason);
-    PRINT_MODULE_DESCRIPTION("Swarm control module");
+    PRINT_MODULE_DESCRIPTION("Swarm control module (no id=1, 6-drone version)");
     PRINT_MODULE_USAGE_NAME("swarm_node", "module");
     PRINT_MODULE_USAGE_COMMAND("start");
     return 0;
