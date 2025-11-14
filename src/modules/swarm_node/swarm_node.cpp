@@ -86,136 +86,28 @@ bool Swarm_Node::swarm_node_init()
     float dist = sqrtf(dx*dx + dy*dy);
     PX4_INFO("id=%d 到目标距离=%.2f m", vehicle_id, (double)dist);
 
-
     return true;
-}
-
-bool Swarm_Node::detect_obstacle()
-{
-    // 订阅距离传感器数据
-    distance_sensor_s dist_data;
-    if (!_distance_sensor_sub.copy(&dist_data)) {
-        obstacle_detected = false;  // 如果没有数据，障碍物未检测
-        return false;
-    }
-
-
-
-    obstacle_distance = dist_data.current_distance / 100.0f;  // 转换为米
-
-    if (obstacle_distance < 1.0f) {  // 假设检测到小于1米的障碍物时认为是障碍物
-        obstacle_detected = true;
-        PX4_INFO("id=%d 检测到障碍物: 距离=%.2f m",
-                 vehicle_id, (double)obstacle_distance);
-    } else {
-        obstacle_detected = false;  // 如果没有检测到障碍物
-    }
-
-    return obstacle_detected;
-}
-
-
-// 调整路径避开障碍物
-void Swarm_Node::adjust_path_for_obstacle(float &goal_x, float &goal_y)
-{
-    float dx = goal_x - _vehicle_local_position.x;
-    float dy = goal_y - _vehicle_local_position.y;
-    float current_angle = atan2f(dy, dx);
-
-    float avoid_angle;
-    if (fabsf(obstacle_angle) < 1.57f) {
-        avoid_angle = current_angle - 1.57f;  // 障碍物在左侧，向右避让
-    } else {
-        avoid_angle = current_angle + 1.57f;  // 障碍物在右侧，向左避让
-    }
-
-    float adjust_x = OBSTACLE_AVOID_DIST * cosf(avoid_angle);
-    float adjust_y = OBSTACLE_AVOID_DIST * sinf(avoid_angle);
-
-    goal_x += adjust_x;
-    goal_y += adjust_y;
-
-    PX4_INFO("id=%d 避障调整: (%.2f, %.2f) -> (%.2f, %.2f)",
-             vehicle_id, (double)(goal_x - adjust_x), (double)(goal_y - adjust_y),
-             (double)goal_x, (double)goal_y);
 }
 
 void Swarm_Node::start_swarm_node()
 {
-
     // 更新订阅数据（所有无人机同步更新）
-
     _vehicle_local_position_sub.copy(&_vehicle_local_position);
     _a01_sub.copy(&_target);
     _a02_sub.copy(&_start_flag);
 
-
     // 保护 begin_z
-
     const float kZeps = 1e-3f;
     if (!PX4_ISFINITE(begin_z) || fabsf(begin_z) < kZeps) {
         begin_z = _vehicle_local_position.z;
     }
 
-
     // 处理 stop 命令（所有无人机统一响应）
-
     a02_s stop_msg{};
     _a02_sub.copy(&stop_msg);
     if (stop_msg.stop_swarm) {
         control_instance::getInstance()->Change_land();
         PX4_INFO("id=%d 收到停止命令，开始降落", vehicle_id);
-
-        return;
-    }
-
-    constexpr float HEX_RADIUS = 250.0f;
-    constexpr float TRI_BASE_DIST = 20.0f;
-    constexpr float GROUP_HEIGHT_DIFF = 15.0f;
-    constexpr float GROUP_HORIZONTAL_OFFSET = 30.0f;
-
-    const float hex_vertices[6][2] = {
-        {HEX_RADIUS * cosf(0), HEX_RADIUS * sinf(0)},
-        {HEX_RADIUS * cosf(M_PI/3), HEX_RADIUS * sinf(M_PI/3)},
-        {HEX_RADIUS * cosf(2*M_PI/3), HEX_RADIUS * sinf(2*M_PI/3)},
-        {HEX_RADIUS * cosf(M_PI), HEX_RADIUS * sinf(M_PI)},
-        {HEX_RADIUS * cosf(4*M_PI/3), HEX_RADIUS * sinf(4*M_PI/3)},
-        {HEX_RADIUS * cosf(5*M_PI/3), HEX_RADIUS * sinf(5*M_PI/3)}
-    };
-
-    const float hex_center_x = begin_x - hex_vertices[0][0];
-    const float hex_center_y = begin_y - hex_vertices[0][1];
-
-    const float tri_off[3][2] = {
-        {0.0f, TRI_BASE_DIST},
-        {-TRI_BASE_DIST * 0.86602540378f, -TRI_BASE_DIST/2},
-        {TRI_BASE_DIST * 0.86602540378f, -TRI_BASE_DIST/2}
-    };
-
-    int id = (int)vehicle_id;
-    int group = -1; 
-    int member_idx = 0;
-    bool is_multicopter = (id >= 1 && id <= 3);
-    bool is_vtol = (id >= 4 && id <= 6);
-
-    if (is_multicopter) {
-        group = 0;
-        member_idx = id - 1;
-    } else if (is_vtol) {
-        group = 1;
-        member_idx = id - 4;
-    } else if (id > 6) {
-        int rem = (id - 1) % 6;
-        group = (rem < 3) ? 0 : 1;
-        member_idx = (rem < 3) ? rem : (rem - 3);
-        is_multicopter = (group == 0);
-        is_vtol = (group == 1);
-    } else {
-        PX4_WARN("id=%d 无效ID，保持当前位置", id);
-        return;
-    }
-
-
         return;
     }
 
@@ -271,59 +163,11 @@ void Swarm_Node::start_swarm_node()
     }
 
     // 计算组中心（所有组同步跟随7点轨迹）
-
     float group_center_x = hex_center_x;
     float group_center_y = hex_center_y;
 
     // 所有组共用同一套7点轨迹切换逻辑（不变）
     switch (POINT_STATE) {
-
-        case point0: group_center_x = hex_center_x + hex_vertices[0][0]; group_center_y = hex_center_y + hex_vertices[0][1]; break;
-        case point1: group_center_x = hex_center_x + hex_vertices[1][0]; group_center_y = hex_center_y + hex_vertices[1][1]; break;
-        case point2: group_center_x = hex_center_x + hex_vertices[2][0]; group_center_y = hex_center_y + hex_vertices[2][1]; break;
-        case point3: group_center_x = hex_center_x + hex_vertices[3][0]; group_center_y = hex_center_y + hex_vertices[3][1]; break;
-        case point4: group_center_x = hex_center_x + hex_vertices[4][0]; group_center_y = hex_center_y + hex_vertices[4][1]; break;
-        case point5: group_center_x = hex_center_x + hex_vertices[5][0]; group_center_y = hex_center_y + hex_vertices[5][1]; break;
-        case point6: group_center_x = hex_center_x + hex_vertices[0][0]; group_center_y = hex_center_y + hex_vertices[0][1]; break;
-        case land:
-            if (control_instance::getInstance()->Change_land()) {
-                POINT_STATE = end;
-                a02_s _a02{};
-                _a02.stop_swarm = true;
-                _a02_pub.publish(_a02);
-            }
-            PX4_INFO("id=%d 进入降落状态", vehicle_id);
-            return;
-        case end:
-            {
-                a02_s _a02{};
-                _a02.stop_swarm = true;
-                _a02_pub.publish(_a02);
-            }
-            PX4_INFO("id=%d 任务结束", vehicle_id);
-            return;
-        default: break;
-    }
-
-    float group_b_center_x = group_center_x;
-    float group_b_center_y = group_center_y - GROUP_HORIZONTAL_OFFSET;
-
-    float goal_x = _vehicle_local_position.x;
-    float goal_y = _vehicle_local_position.y;
-    float goal_z = _vehicle_local_position.z;
-    const float base_z = begin_z - 50.0f;
-
-    if (group == 0) {
-        goal_x = group_center_x + tri_off[member_idx][0];
-        goal_y = group_center_y + tri_off[member_idx][1];
-        goal_z = base_z;
-    } else if (group == 1) {
-        goal_x = group_b_center_x + tri_off[member_idx][0];
-        goal_y = group_b_center_y + tri_off[member_idx][1];
-        goal_z = base_z - GROUP_HEIGHT_DIFF;
-    } else {
-        PX4_WARN("id=%d 无效ID，保持当前位置", id);
-
     case point0:  // 第1点（悬停点）
         group_center_x = hex_center_x + hex_vertices[0][0];
         group_center_y = hex_center_y + hex_vertices[0][1];
@@ -368,16 +212,10 @@ void Swarm_Node::start_swarm_node()
             _a02_pub.publish(_a02);
         }
         PX4_INFO("id=%d 任务结束", vehicle_id);
-
         return;
+    default:
+        break;
     }
-
-
-    // 检查障碍物并调整路径
-    if (detect_obstacle()) {
-        adjust_path_for_obstacle(goal_x, goal_y);
-    }
-
 
     // B组中心相对于A组偏移（但跟随同一轨迹点，不变）
     float group_b_center_x = group_center_x;
@@ -414,7 +252,6 @@ void Swarm_Node::start_swarm_node()
              (double)goal_x, (double)goal_y, (double)goal_z);
 
     // 位置控制（所有无人机使用相同的到达判断逻辑，不变）
-
     bool reached = control_instance::getInstance()->Control_posxyz(goal_x, goal_y, goal_z);
 
     // 所有无人机同步切换轨迹点（不变）
@@ -429,12 +266,8 @@ void Swarm_Node::start_swarm_node()
         case point6: POINT_STATE = land; break;
         default: break;
         }
-
-        PX4_INFO("id=%d 已到达第%d点，切换到第%d点", vehicle_id, POINT_STATE, POINT_STATE + 1);
-
         PX4_INFO("id=%d 已到达第%d点，切换到第%d点",
                  vehicle_id, POINT_STATE, POINT_STATE + 1);
-
     }
 }
 
@@ -455,7 +288,7 @@ void Swarm_Node::Run()
         updateParams();
     }
 
-
+    // 所有无人机状态机流程统一（调整VTOL组ID范围）
     switch(STATE)
     {
     case state::INIT:
@@ -472,16 +305,10 @@ void Swarm_Node::Run()
         }
         break;
     case state::TAKEOFF:
-
-        if(control_instance::getInstance()->Control_posxyz(begin_x, begin_y, begin_z - 50)) {
-            PX4_INFO("id=%d 已到达悬停点（第1点）", vehicle_id);
-            if (vehicle_id >= 4 && vehicle_id <= 6) {
-
         // 所有无人机起飞到自身悬停点（第1点）
         if(control_instance::getInstance()->Control_posxyz(begin_x, begin_y, begin_z - 50)) {
             PX4_INFO("id=%d 已到达悬停点（第1点）", vehicle_id);
             if (vehicle_id >= 4 && vehicle_id <= 6) {  // VTOL组ID范围更新为4-6
-
                 STATE=state::MC_TO_FW;
             } else {
                 STATE=state::CONTROL;
@@ -489,11 +316,7 @@ void Swarm_Node::Run()
         }
         break;
     case state::MC_TO_FW:
-
-        if (vehicle_id >= 4 && vehicle_id <= 6) {
-
         if (vehicle_id >= 4 && vehicle_id <= 6) {  // VTOL组ID范围更新为4-6
-
             if(control_instance::getInstance()->Control_mc_to_fw()) {
                 STATE=state::CONTROL;
                 PX4_INFO("id=%d 已切换到固定翼模式，开始轨迹飞行", vehicle_id);

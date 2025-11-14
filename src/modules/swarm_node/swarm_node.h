@@ -21,7 +21,6 @@
 #include <uORB/topics/a01.h>
 #include <uORB/topics/a02.h>
 #include <uORB/topics/parameter_update.h>
-#include <uORB/topics/distance_sensor.h>
 //mc_control_instance* mc_control_instance::instance = nullptr;
 #define M_PI_PRECISE	3.141592653589793238462643383279502884
 
@@ -41,21 +40,11 @@ public:
 	static int print_usage(const char *reason = nullptr);
 
 	bool init();
-// 避障功能：检查障碍物，并调整路径
-bool detect_obstacle();
-void adjust_path_for_obstacle(float &goal_x, float &goal_y);
+
 	int print_status() override;
-   // 添加distance_sensor主题的订阅者
-    uORB::Subscription _distance_sensor_sub{ORB_ID(distance_sensor)};  // 声明订阅者对象
+
 private:
- float OBSTACLE_AVOID_DIST = 2.0f; // 设置一个合理的避障距离，例如 2 米
-
 	void Run() override;
-	private:
-    bool obstacle_detected = false;  // 用于存储障碍物是否被检测到
-    float obstacle_distance = 0.0f;  // 用于存储障碍物的距离
-    float obstacle_angle = 0.0f;     // 用于存储障碍物的角度
-
 	//mc_control_instance* instance = mc_control_instance::getInstance();
 //mc_control_instance mc_ctl_instance;
 bool takeoff();
@@ -158,4 +147,3 @@ uORB::Publication<trajectory_setpoint_s>		_trajectory_setpoint_pub{ORB_ID(trajec
 
 	bool _armed{false};
 };
-
