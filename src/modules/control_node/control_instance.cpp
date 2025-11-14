@@ -285,6 +285,22 @@ bool control_instance::Control_mc_to_fw()
                         //  return false;
                         // }
 }
+void control_instance::SetYaw(float new_yaw_rad)
+{
+    // 简单实现思路：publish vehicle_attitude_setpoint_s 或 position setpoint with yaw
+    vehicle_attitude_setpoint_s att_sp{};
+    att_sp.timestamp = hrt_absolute_time();
+    // 把 yaw 转为 quaternion（only yaw）
+    matrix::Quatf q = matrix::Quatf(matrix::Eulerf(0.0f, 0.0f, new_yaw_rad));
+  att_sp.q_d[0] = q(0);
+att_sp.q_d[1] = q(1);
+att_sp.q_d[2] = q(2);
+att_sp.q_d[3] = q(3);
+
+    att_sp.yaw_sp_move_rate = 0.0f;
+    // publish 使用 control_instance 内部的 publisher（若没有，可新增）
+    _att_sp_pub.publish(att_sp);
+}
 
 bool control_instance::Control_fw_to_mc()
 {
